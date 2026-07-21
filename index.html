@@ -4,7 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chorus</title>
+<link rel="icon" href="assets/icons/chorus-icon-light-mode.svg" media="(prefers-color-scheme: light)">
+<link rel="icon" href="assets/icons/chorus-icon-dark-mode.svg" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" href="assets/icons/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#201f1d" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-title" content="Chorus">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
@@ -79,8 +91,24 @@
   }
   header.top h1 { font-size: 20px; margin: 0; font-weight: 650; }
   header.top .date { font-size: 13px; color: var(--text-dim); }
-  header.top .tagline { font-size: 11.5px; color: var(--text-dim); font-weight: 500; margin-top: 1px; }
+  header.top .tagline { font-size: 11.5px; color: var(--text-dim); font-weight: 500; margin-top: 4px; }
   .account-bar { display: flex; align-items: center; gap: 10px; }
+
+  /* Chorus logo lockup */
+  .chorus-logo { display: inline-flex; align-items: center; gap: 12px; color: var(--text); }
+  .chorus-seal {
+    position: relative; width: 38px; height: 38px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    border: 1.5px solid #b68235; border-radius: 50%; color: #b68235;
+  }
+  .chorus-seal::before {
+    content: ""; position: absolute; inset: 4px;
+    border: 1px solid rgba(32, 31, 29, 0.16); border-radius: 50%;
+  }
+  .chorus-word {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 600; font-size: 27px; letter-spacing: -0.01em; line-height: 1;
+  }
   .sync-status { font-size: 11.5px; color: var(--text-dim); font-weight: 600; }
   .sync-status.busy { color: var(--accent); }
   .sync-status.ok { color: var(--green); }
@@ -537,7 +565,12 @@
 
 <div class="auth-gate" id="authGate">
   <div class="auth-card">
-    <h1>🏡 Chorus</h1>
+    <div class="chorus-logo" style="justify-content:center; margin-bottom:8px;">
+      <span class="chorus-seal" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+      </span>
+      <span class="chorus-word">Chorus</span>
+    </div>
     <p style="margin-bottom:4px; font-weight:600; color:var(--text);">Your chores, on us</p>
     <p>Sign in with Google to sync your tasks. Your data is stored in a Google Sheet in your own Drive — nothing is stored anywhere else.</p>
     <button class="gsi-btn" id="googleSignInBtn">Continue with Google</button>
@@ -549,7 +582,12 @@
 <div class="app" id="appRoot" style="display:none">
   <header class="top">
     <div>
-      <h1>🏡 Chorus</h1>
+      <div class="chorus-logo">
+        <span class="chorus-seal" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+        </span>
+        <span class="chorus-word">Chorus</span>
+      </div>
       <div class="tagline">Your chores, on us</div>
     </div>
     <div class="account-bar">
