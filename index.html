@@ -343,7 +343,7 @@
   /* Board view */
   .board {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 14px;
   }
   .column {
@@ -351,6 +351,7 @@
     border-radius: var(--radius);
     padding: 10px;
     min-height: 200px;
+    min-width: 0;
   }
   .column h3 {
     font-size: 12.5px;
@@ -377,8 +378,17 @@
     cursor: grab;
   }
   .card.dragging { opacity: 0.4; }
-  .card .chore-name { font-size: 13.5px; }
+  .card { overflow: hidden; }
+  .card .chore-name { font-size: 13.5px; overflow-wrap: anywhere; }
   .card .chore-meta { margin-top: 7px; }
+  .card .chore-desc {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    max-height: 2.9em;
+  }
   .col-drop-hint {
     border: 2px dashed #cfcac1;
     border-radius: 8px;
