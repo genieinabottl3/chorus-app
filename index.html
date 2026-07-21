@@ -50,8 +50,28 @@
     background: var(--bg);
     padding: 20px;
     z-index: 100;
+    overflow: hidden;
+  }
+  /* Blurred app-preview backdrop behind the sign-in card */
+  .auth-bg {
+    position: absolute; inset: 0;
+    overflow: hidden;
+    filter: blur(7px);
+    opacity: 0.72;
+    pointer-events: none;
+    user-select: none;
+    transform: scale(1.03); /* hide blurred edges */
+  }
+  .auth-bg .app-mock { max-width: 980px; margin: 0 auto; padding: 20px 20px 60px; }
+  .auth-bg .mock-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .auth-scrim {
+    position: absolute; inset: 0;
+    background: linear-gradient(rgba(240,237,231,0.30), rgba(230,226,219,0.52));
+    z-index: 1;
   }
   .auth-card {
+    position: relative;
+    z-index: 2;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 14px;
@@ -59,7 +79,7 @@
     width: 380px;
     max-width: 92vw;
     text-align: center;
-    box-shadow: var(--shadow);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.14);
   }
   .auth-card h1 { font-size: 20px; margin: 0 0 6px; }
   .auth-card p { font-size: 13.5px; color: var(--text-dim); margin: 0 0 22px; line-height: 1.5; }
@@ -589,6 +609,32 @@
 <body>
 
 <div class="auth-gate" id="authGate">
+  <div class="auth-bg" aria-hidden="true">
+    <div class="app-mock">
+      <div class="mock-head">
+        <div class="chorus-logo">
+          <span class="chorus-seal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+          <span class="chorus-word">Chorus</span>
+        </div>
+        <div class="date">Tuesday, Jul 21</div>
+      </div>
+      <input class="search-input" placeholder="Search all tasks — every profile, everything…" disabled>
+      <div class="profile-bar">
+        <span class="profile-chip active">Personal</span>
+        <span class="profile-chip">Work</span>
+        <span class="profile-add-btn">+</span>
+      </div>
+      <div class="tabs">
+        <button class="active">Today</button><button>Upcoming</button><button>Board</button><button>Calendar</button><button>Archive</button>
+      </div>
+      <div class="today-list" style="margin-top:14px;">
+        <div class="chore-row"><div class="check"></div><div class="chore-main"><div class="chore-name-row"><div class="chore-name"><span class="task-num">#1</span> Wash dishes</div></div><div class="chore-meta"><span class="mini-tag" style="color:#c96f4a; background:#c96f4a22">chores</span><span class="freq-label">Every day</span></div></div></div>
+        <div class="chore-row"><div class="check checked">✓</div><div class="chore-main"><div class="chore-name-row"><div class="chore-name"><span class="task-num">#2</span> Pack nursery bag</div></div><div class="chore-meta"><span class="mini-tag" style="color:#a45ac9; background:#a45ac922">baby</span><span class="freq-label">Every day</span></div></div></div>
+        <div class="chore-row"><div class="check"></div><div class="chore-main"><div class="chore-name-row"><div class="chore-name"><span class="task-num">#5</span> Water the plants</div></div><div class="chore-meta"><span class="mini-tag" style="color:#4c8c6b; background:#4c8c6b22">home</span><span class="freq-label">Mon, Thu</span></div></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="auth-scrim" aria-hidden="true"></div>
   <div class="auth-card">
     <div class="chorus-logo" style="justify-content:center; margin-bottom:8px;">
       <span class="chorus-seal" aria-hidden="true">
@@ -596,8 +642,8 @@
       </span>
       <span class="chorus-word">Chorus</span>
     </div>
-    <p style="margin-bottom:4px; font-weight:600; color:var(--text);">Your chores, on us</p>
-    <p>Sign in with Google to sync your tasks. Your data is stored in a Google Sheet in your own Drive — nothing is stored anywhere else.</p>
+    <p style="margin-bottom:4px; font-weight:600; color:var(--text);"> Your chores, on us</p>
+    <p>Sign in with Google to sync your tasks. Your data is stored in a Google Sheet in your own Drive. Nothing is stored anywhere else.</p>
     <button class="gsi-btn" id="googleSignInBtn">Continue with Google</button>
     <div class="auth-error" id="authError"></div>
     <div class="auth-note">You'll do this once per device/browser.</div>
