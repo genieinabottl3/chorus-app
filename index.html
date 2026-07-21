@@ -87,6 +87,53 @@
   .sync-status.err { color: var(--red); }
   .user-email { font-size: 11.5px; color: var(--text-dim); }
 
+  .profile-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; }
+  .profile-chip {
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+    border: 1.5px solid var(--border);
+    background: var(--card);
+    color: var(--text-dim);
+  }
+  .profile-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+  .profile-add-btn {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    border: 1.5px dashed var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+  }
+  .profile-add-input {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1.5px solid var(--accent);
+    font-size: 13px;
+    width: 130px;
+  }
+  .profile-badge {
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+
+  /* Upcoming view */
+  .upcoming-group { margin-bottom: 18px; }
+  .upcoming-group h4 {
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-dim);
+    margin: 0 0 8px;
+  }
+
   .tabs {
     display: flex;
     gap: 4px;
@@ -94,7 +141,19 @@
     padding: 4px;
     border-radius: 10px;
     width: fit-content;
+    max-width: 100%;
+    flex-wrap: wrap;
     margin-bottom: 14px;
+  }
+  .search-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-size: 14px;
+    background: var(--card);
+    margin-bottom: 14px;
+    font-family: inherit;
   }
   .tabs button {
     border: none;
@@ -499,12 +558,18 @@
       <button class="icon-btn" id="signOutBtn">Sign out</button>
     </div>
   </header>
-  <div class="date" id="todayLabel" style="margin-bottom:14px;"></div>
+  <div class="date" id="todayLabel" style="margin-bottom:12px;"></div>
+
+  <input type="text" class="search-input" id="searchInput" placeholder="Search all tasks — every profile, everything…" autocomplete="off">
+
+  <div class="profile-bar" id="profileBar"></div>
 
   <div class="tabs">
     <button id="tabToday" class="active">Today</button>
+    <button id="tabUpcoming">Upcoming</button>
     <button id="tabBoard">Board</button>
     <button id="tabCalendar">Calendar</button>
+    <button id="tabArchive">Archive</button>
   </div>
 
   <div class="toolbar">
@@ -513,8 +578,11 @@
   </div>
 
   <div id="todayView"></div>
+  <div id="upcomingView" style="display:none"></div>
   <div id="boardView" style="display:none"></div>
   <div id="calendarView" style="display:none"></div>
+  <div id="archiveView" style="display:none"></div>
+  <div id="searchResults" style="display:none"></div>
 </div>
 
 <div id="modalRoot"></div>
@@ -651,11 +719,14 @@
     if (parsed.calendarMonth === undefined) parsed.calendarMonth = now.getMonth();
     if (!parsed.selectedDate) parsed.selectedDate = fmtDate(now);
     if (!parsed.expandedTasks) parsed.expandedTasks = [];
+    if (!parsed.profiles || !parsed.profiles.length) parsed.profiles = defaultProfiles();
+    if (!parsed.activeProfile || (parsed.activeProfile !== 'all' && !parsed.profiles.some(p => p.id === parsed.activeProfile))) parsed.activeProfile = parsed.profiles[0].id;
     (parsed.tasks||[]).forEach(t => {
       if (t.description === undefined) t.description = '';
       if (!t.subtasks) t.subtasks = [];
       if (!t.updatedAt) t.updatedAt = t.createdAt || Date.now();
       if (t.type === 'adhoc' && t.completedAt === undefined) t.completedAt = (t.column === 'done') ? t.updatedAt : null;
+      if (!t.profile) t.profile = parsed.activeProfile;
     });
     return parsed;
   }
@@ -679,16 +750,22 @@
 
   function genId(prefix){ return prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7); }
 
+  function defaultProfiles(){
+    return [ { id: 'personal', name: 'Personal' }, { id: 'work', name: 'Work' } ];
+  }
+
   function defaultState(){
     const now = Date.now();
     const today = new Date();
     return {
       tasks: [
-        { id: 'demo1', name: 'Wash dishes', description: '', tags: ['chores'], type: 'recurring', recurrence: { freq: 'daily' }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
-        { id: 'demo2', name: 'Take bins out', description: '', tags: ['chores'], type: 'recurring', recurrence: { freq: 'weekly', weekdays: [2] }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
-        { id: 'demo4', name: 'Submit expense report', description: '', tags: ['office'], type: 'adhoc', column: 'todo', dueDate: null, completedAt: null, subtasks: [], createdAt: now, updatedAt: now }
+        { id: 'demo1', name: 'Wash dishes', description: '', tags: ['chores'], profile: 'personal', type: 'recurring', recurrence: { freq: 'daily' }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
+        { id: 'demo2', name: 'Take bins out', description: '', tags: ['chores'], profile: 'personal', type: 'recurring', recurrence: { freq: 'weekly', weekdays: [2] }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
+        { id: 'demo4', name: 'Submit expense report', description: '', tags: ['office'], profile: 'work', type: 'adhoc', column: 'todo', dueDate: null, completedAt: null, subtasks: [], createdAt: now, updatedAt: now }
       ],
       activeTag: 'all',
+      profiles: defaultProfiles(),
+      activeProfile: 'personal',
       view: 'today',
       calendarYear: today.getFullYear(),
       calendarMonth: today.getMonth(),
@@ -770,6 +847,66 @@
   function taskMatchesFilter(task){
     if (state.activeTag === 'all') return true;
     return (task.tags||[]).includes(state.activeTag);
+  }
+
+  const PROFILE_PALETTE = ['#4a7fc9','#c96f4a','#4c8c6b','#a45ac9','#c9a24a','#c94a6f'];
+  function profileById(id){ return (state.profiles||[]).find(p => p.id === id); }
+  function profileColor(id){
+    const idx = (state.profiles||[]).findIndex(p => p.id === id);
+    return PROFILE_PALETTE[Math.max(0, idx) % PROFILE_PALETTE.length];
+  }
+  function taskMatchesProfile(task){
+    if (state.activeProfile === 'all') return true;
+    return task.profile === state.activeProfile;
+  }
+  function profileBadgeHtml(task){
+    const p = profileById(task.profile);
+    if (!p) return '';
+    const c = profileColor(task.profile);
+    return `<span class="profile-badge" style="color:${c}">${escapeHtml(p.name)}</span>`;
+  }
+
+  function renderProfileBar(){
+    const bar = document.getElementById('profileBar');
+    if (!bar) return;
+    let html = `<button class="profile-chip ${state.activeProfile==='all'?'active':''}" data-profile="all">All</button>`;
+    (state.profiles||[]).forEach(p => {
+      html += `<button class="profile-chip ${state.activeProfile===p.id?'active':''}" data-profile="${p.id}">${escapeHtml(p.name)}</button>`;
+    });
+    html += `<button class="profile-add-btn" id="profileAddBtn" title="Add profile">+</button>`;
+    bar.innerHTML = html;
+    bar.querySelectorAll('.profile-chip').forEach(el => {
+      el.addEventListener('click', () => {
+        state.activeProfile = el.dataset.profile;
+        save();
+        renderAll();
+      });
+    });
+    document.getElementById('profileAddBtn').addEventListener('click', () => {
+      const addBtn = document.getElementById('profileAddBtn');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'profile-add-input';
+      input.placeholder = 'Profile name';
+      addBtn.replaceWith(input);
+      input.focus();
+      let committed = false;
+      function commit(){
+        if (committed) return;
+        committed = true;
+        const v = input.value.trim();
+        if (v) {
+          const id = genId('profile');
+          state.profiles.push({ id, name: v });
+          state.activeProfile = id;
+          save();
+        }
+        renderProfileBar();
+        renderAll();
+      }
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); else if (e.key === 'Escape') { committed = true; renderProfileBar(); } });
+      input.addEventListener('blur', commit);
+    });
   }
 
   function renderTagbar(){
@@ -904,7 +1041,7 @@
 
   function renderToday(){
     const container = document.getElementById('todayView');
-    const due = state.tasks.filter(t => t.type === 'recurring' && isDueToday(t) && taskMatchesFilter(t));
+    const due = state.tasks.filter(t => t.type === 'recurring' && isDueToday(t) && taskMatchesFilter(t) && taskMatchesProfile(t));
     if (due.length === 0) {
       container.innerHTML = `<div class="today-empty">Nothing due today${state.activeTag!=='all' ? ' for "'+escapeHtml(state.activeTag)+'"' : ''}. 🎉</div>`;
       return;
@@ -925,6 +1062,7 @@
             </div>
             ${descHtml(task)}
             <div class="chore-meta">
+              ${state.activeProfile==='all'?profileBadgeHtml(task):''}
               ${tagsHtml(task)}
               <span class="freq-label">${freqLabel(task)}</span>
               ${streak > 1 ? `<span class="streak">🔥 ${streak}d</span>` : ''}
@@ -960,7 +1098,7 @@
 
   function renderBoard(){
     const container = document.getElementById('boardView');
-    const adhoc = state.tasks.filter(t => t.type === 'adhoc' && taskMatchesFilter(t));
+    const adhoc = state.tasks.filter(t => t.type === 'adhoc' && taskMatchesFilter(t) && taskMatchesProfile(t));
     let html = '<div class="board">';
     COLUMNS.forEach(col => {
       const items = adhoc.filter(t => (t.column || 'todo') === col.key);
@@ -977,7 +1115,7 @@
               ${subtaskBadgeHtml(task)}
             </div>
             ${descHtml(task)}
-            <div class="chore-meta">${tagsHtml(task)}${dueLabelHtml(task)}</div>
+            <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}${dueLabelHtml(task)}</div>
             ${timestampsHtml(task)}
             ${inlineSubtaskTreeHtml(task)}
           </div>`;
@@ -1008,6 +1146,7 @@
         if (task) {
           const wasDone = task.column === 'done';
           task.column = col.dataset.col;
+          if ((task.column === 'doing' || task.column === 'done') && !task.startedAt) task.startedAt = Date.now();
           if (task.column === 'done' && !wasDone) task.completedAt = Date.now();
           else if (task.column !== 'done' && wasDone) task.completedAt = null;
           task.updatedAt = Date.now();
@@ -1022,7 +1161,7 @@
   function getTasksForDate(dateObj){
     const key = fmtDate(dateObj);
     return state.tasks.filter(t => {
-      if (!taskMatchesFilter(t)) return false;
+      if (!taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
       if (t.type === 'recurring') return isDueOnDate(t, dateObj);
       if (t.type === 'adhoc') return t.dueDate === key;
       return false;
@@ -1117,7 +1256,7 @@
                   ${subtaskBadgeHtml(task)}
                 </div>
                 ${descHtml(task)}
-                <div class="chore-meta">${tagsHtml(task)}<span class="freq-label">${freqLabel(task)}</span></div>
+                <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}<span class="freq-label">${freqLabel(task)}</span></div>
                 ${inlineSubtaskTreeHtml(task)}
               </div>
               <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
@@ -1132,7 +1271,7 @@
                   ${subtaskBadgeHtml(task)}
                 </div>
                 ${descHtml(task)}
-                <div class="chore-meta">${tagsHtml(task)}${dueLabelHtml(task)}<span class="freq-label">${COLUMNS.find(c=>c.key===(task.column||'todo')).label}</span></div>
+                <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}${dueLabelHtml(task)}<span class="freq-label">${COLUMNS.find(c=>c.key===(task.column||'todo')).label}</span></div>
                 ${inlineSubtaskTreeHtml(task)}
               </div>
               <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
@@ -1155,18 +1294,204 @@
     bindSubtaskToggles(panel, renderDayPanel);
   }
 
+  // ---- Upcoming (next 7 days, unscoped by profile) ----
+  function renderUpcoming(){
+    const container = document.getElementById('upcomingView');
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      days.push(d);
+    }
+    let anyItems = false;
+    let html = '';
+    days.forEach(d => {
+      const key = fmtDate(d);
+      const items = state.tasks.filter(t => {
+        if (!taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
+        if (t.type === 'recurring') return isDueOnDate(t, d);
+        if (t.type === 'adhoc') return t.dueDate === key;
+        return false;
+      });
+      if (items.length === 0) return;
+      anyItems = true;
+      const label = (i => {
+        if (key === todayStr()) return 'Today';
+        const tmr = new Date(); tmr.setDate(tmr.getDate() + 1);
+        if (key === fmtDate(tmr)) return 'Tomorrow';
+        return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+      })();
+      html += `<div class="upcoming-group"><h4>${label}</h4><div class="today-list">`;
+      items.forEach(task => {
+        if (task.type === 'recurring') {
+          const done = isCompletedOn(task, key);
+          html += `
+            <div class="chore-row ${done?'done':''}" data-id="${task.id}">
+              <div class="check ${done?'checked':''}" data-action="toggle-upcoming" data-id="${task.id}" data-date="${key}">${done?'✓':''}</div>
+              <div class="chore-main">
+                <div class="chore-name-row">
+                  <div class="chore-name">${escapeHtml(task.name)}</div>
+                  ${expandToggleHtml(task)}
+                  ${subtaskBadgeHtml(task)}
+                </div>
+                ${descHtml(task)}
+                <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}<span class="freq-label">${freqLabel(task)}</span></div>
+                ${inlineSubtaskTreeHtml(task)}
+              </div>
+              <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
+            </div>`;
+        } else {
+          html += `
+            <div class="chore-row" data-id="${task.id}">
+              <div class="chore-main">
+                <div class="chore-name-row">
+                  <div class="chore-name">${escapeHtml(task.name)}</div>
+                  ${expandToggleHtml(task)}
+                  ${subtaskBadgeHtml(task)}
+                </div>
+                ${descHtml(task)}
+                <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}${dueLabelHtml(task)}<span class="freq-label">${COLUMNS.find(c=>c.key===(task.column||'todo')).label}</span></div>
+                ${inlineSubtaskTreeHtml(task)}
+              </div>
+              <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
+            </div>`;
+        }
+      });
+      html += '</div></div>';
+    });
+    if (!anyItems) {
+      html = `<div class="today-empty">Nothing coming up in the next 7 days${state.activeTag!=='all' ? ' for "'+escapeHtml(state.activeTag)+'"' : ''}. 🎉</div>`;
+    }
+    container.innerHTML = html;
+
+    container.querySelectorAll('[data-action="toggle-upcoming"]').forEach(el => {
+      el.addEventListener('click', () => {
+        const task = state.tasks.find(t => t.id === el.dataset.id);
+        toggleCompletion(task, el.dataset.date);
+        renderUpcoming();
+      });
+    });
+    container.querySelectorAll('[data-action="edit"]').forEach(el => {
+      el.addEventListener('click', () => openModal(state.tasks.find(t => t.id === el.dataset.id)));
+    });
+    bindSubtaskToggles(container, renderUpcoming);
+  }
+
+  // ---- Archive (completed one-off tasks) ----
+  function archiveLineHtml(task){
+    const parts = ['Created ' + formatDateShort(task.createdAt)];
+    if (task.startedAt) parts.push('Started ' + formatDateShort(task.startedAt));
+    if (task.startedAt && task.completedAt) parts.push('In progress ' + durationLabel(task.startedAt, task.completedAt));
+    if (task.completedAt) parts.push('Completed ' + formatDateShort(task.completedAt));
+    return parts.join(' · ');
+  }
+
+  function renderArchive(){
+    const container = document.getElementById('archiveView');
+    const done = state.tasks.filter(t => t.type === 'adhoc' && t.column === 'done' && taskMatchesFilter(t) && taskMatchesProfile(t));
+    done.sort((a,b) => (b.completedAt||0) - (a.completedAt||0));
+    if (done.length === 0) {
+      container.innerHTML = `<div class="today-empty">No completed one-off tasks yet.</div>`;
+      return;
+    }
+    let html = '<div class="today-list">';
+    done.forEach(task => {
+      html += `
+        <div class="chore-row" data-id="${task.id}">
+          <div class="chore-main">
+            <div class="chore-name-row"><div class="chore-name">${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
+            ${descHtml(task)}
+            <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}</div>
+            <div class="task-timestamps">${archiveLineHtml(task)}</div>
+          </div>
+          <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
+        </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+    container.querySelectorAll('[data-action="edit"]').forEach(el => {
+      el.addEventListener('click', () => openModal(state.tasks.find(t => t.id === el.dataset.id)));
+    });
+  }
+
+  // ---- Global search (top bar — spans every profile, ignores all filters) ----
+  let searchQuery = '';
+  function searchSummary(task){
+    if (task.type === 'recurring') {
+      const dates = (task.completedDates||[]).slice().sort();
+      const last = dates.length ? formatDateShort(parseDate(dates[dates.length-1]).getTime()) : 'never';
+      return 'Recurring · ' + freqLabel(task) + ' · Last done ' + last;
+    }
+    const col = COLUMNS.find(c=>c.key===(task.column||'todo')).label;
+    let s = 'One-off · ' + col;
+    if (task.dueDate) s += ' · Due ' + formatDateShort(parseDate(task.dueDate).getTime());
+    if (task.completedAt) s += ' · Completed ' + formatDateShort(task.completedAt);
+    return s;
+  }
+  function updateSearchMode(){
+    const active = searchQuery.trim().length > 0;
+    document.getElementById('profileBar').style.display = active ? 'none' : '';
+    document.querySelector('.tabs').style.display = active ? 'none' : '';
+    document.querySelector('.toolbar').style.display = active ? 'none' : '';
+    if (active) {
+      ['todayView','upcomingView','boardView','calendarView','archiveView'].forEach(id => {
+        document.getElementById(id).style.display = 'none';
+      });
+      document.getElementById('searchResults').style.display = '';
+      renderSearchResults();
+    } else {
+      document.getElementById('searchResults').style.display = 'none';
+      switchTab(state.view);
+    }
+  }
+  function renderSearchResults(){
+    const el = document.getElementById('searchResults');
+    if (!el) return;
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) { el.innerHTML = ''; return; }
+    const matches = state.tasks.filter(t => {
+      const hay = (t.name + ' ' + (t.description||'') + ' ' + (t.tags||[]).join(' ') + ' ' + ((profileById(t.profile)||{}).name||'')).toLowerCase();
+      return hay.includes(q);
+    });
+    if (matches.length === 0) { el.innerHTML = `<div class="today-empty">No matches for “${escapeHtml(searchQuery)}”.</div>`; return; }
+    let html = `<div class="hint" style="margin-bottom:10px;">${matches.length} result${matches.length===1?'':'s'} across all profiles</div><div class="today-list">`;
+    matches.forEach(task => {
+      html += `
+        <div class="chore-row" data-id="${task.id}">
+          <div class="chore-main">
+            <div class="chore-name-row"><div class="chore-name">${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
+            ${descHtml(task)}
+            <div class="chore-meta">${profileBadgeHtml(task)}${tagsHtml(task)}</div>
+            <div class="task-timestamps">${searchSummary(task)}</div>
+          </div>
+          <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
+        </div>`;
+    });
+    html += '</div>';
+    el.innerHTML = html;
+    el.querySelectorAll('[data-action="edit"]').forEach(x => {
+      x.addEventListener('click', () => openModal(state.tasks.find(t => t.id === x.dataset.id)));
+    });
+  }
+
   function renderAll(){
+    renderProfileBar();
     renderTagbar();
     renderToday();
     renderBoard();
     if (document.getElementById('calendarView').style.display !== 'none') renderCalendar();
+    if (document.getElementById('upcomingView').style.display !== 'none') renderUpcoming();
+    if (document.getElementById('archiveView').style.display !== 'none') renderArchive();
+    if (searchQuery.trim()) renderSearchResults();
   }
 
   // Tabs
   const tabs = {
     today: { btn: 'tabToday', view: 'todayView' },
+    upcoming: { btn: 'tabUpcoming', view: 'upcomingView' },
     board: { btn: 'tabBoard', view: 'boardView' },
-    calendar: { btn: 'tabCalendar', view: 'calendarView' }
+    calendar: { btn: 'tabCalendar', view: 'calendarView' },
+    archive: { btn: 'tabArchive', view: 'archiveView' }
   };
   function switchTab(name){
     state.view = name;
@@ -1175,11 +1500,16 @@
       document.getElementById(tabs[k].view).style.display = (k === name) ? '' : 'none';
     });
     if (name === 'calendar') renderCalendar();
+    if (name === 'upcoming') renderUpcoming();
+    if (name === 'archive') renderArchive();
     save();
   }
   document.getElementById('tabToday').addEventListener('click', () => switchTab('today'));
+  document.getElementById('tabUpcoming').addEventListener('click', () => switchTab('upcoming'));
   document.getElementById('tabBoard').addEventListener('click', () => switchTab('board'));
   document.getElementById('tabCalendar').addEventListener('click', () => switchTab('calendar'));
+  document.getElementById('tabArchive').addEventListener('click', () => switchTab('archive'));
+  document.getElementById('searchInput').addEventListener('input', e => { searchQuery = e.target.value; updateSearchMode(); });
 
   // Modal
   let editingId = null;
@@ -1194,6 +1524,7 @@
   let modalDueDate = '';
   let modalSubtasks = [];
   let modalAddChildFor = null;
+  let modalProfile = 'personal';
 
   function deepCloneSubtasks(list){
     return (list||[]).map(s => ({ id: s.id, name: s.name, done: !!s.done, children: (s.children||[]).map(c => ({ id: c.id, name: c.name, done: !!c.done })) }));
@@ -1212,6 +1543,7 @@
     modalDueDate = task ? (task.dueDate || '') : '';
     modalSubtasks = task ? deepCloneSubtasks(task.subtasks) : [];
     modalAddChildFor = null;
+    modalProfile = task ? (task.profile || state.profiles[0].id) : (state.activeProfile === 'all' ? state.profiles[0].id : state.activeProfile);
     renderModal(task ? task.name : '', task ? task.description : '');
   }
 
@@ -1227,8 +1559,10 @@
   function metaLine(task){
     const parts = ['Created ' + formatDateShort(task.createdAt)];
     parts.push('Updated ' + formatRelative(task.updatedAt || task.createdAt));
-    if (task.type === 'adhoc' && task.completedAt) {
-      parts.push('Completed ' + formatDateShort(task.completedAt) + ' (' + durationLabel(task.createdAt, task.completedAt) + ')');
+    if (task.type === 'adhoc') {
+      if (task.startedAt) parts.push('Started ' + formatDateShort(task.startedAt));
+      if (task.startedAt && task.completedAt) parts.push('In progress ' + durationLabel(task.startedAt, task.completedAt));
+      if (task.completedAt) parts.push('Completed ' + formatDateShort(task.completedAt));
     }
     if (task.type === 'recurring') {
       const n = (task.completedDates||[]).length;
@@ -1261,6 +1595,12 @@
             <div class="tag-suggestions" id="tagSuggestions">
               ${existingTags.map(t => `<div class="tag-chip" style="color:${tagColor(t)}; background:${tagColor(t)}22" data-tag="${escapeHtml(t)}"><span class="dot"></span>${escapeHtml(t)}</div>`).join('')}
             </div>
+          </div>
+          <div class="field">
+            <label>Profile</label>
+            <select id="fProfile">
+              ${(state.profiles||[]).map(p => `<option value="${p.id}" ${modalProfile===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}
+            </select>
           </div>
           <div class="field">
             <label>Type</label>
@@ -1296,6 +1636,7 @@
 
     document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
     document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('fProfile').addEventListener('change', e => { modalProfile = e.target.value; });
     document.getElementById('btnRecurring').addEventListener('click', () => { commitPendingTag(); modalType = 'recurring'; renderModal(document.getElementById('fName').value, document.getElementById('fDesc').value); });
     document.getElementById('btnAdhoc').addEventListener('click', () => { commitPendingTag(); modalType = 'adhoc'; renderModal(document.getElementById('fName').value, document.getElementById('fDesc').value); });
 
@@ -1330,6 +1671,7 @@
       task.name = name;
       task.description = description;
       task.tags = [...modalTags];
+      task.profile = modalProfile;
       task.type = modalType;
       task.subtasks = deepCloneSubtasks(modalSubtasks);
       task.updatedAt = Date.now();
@@ -1342,6 +1684,7 @@
       } else {
         const wasDone = task.column === 'done';
         task.column = modalColumn;
+        if ((modalColumn === 'doing' || modalColumn === 'done') && !task.startedAt) task.startedAt = Date.now();
         if (modalColumn === 'done' && !wasDone) task.completedAt = Date.now();
         else if (modalColumn !== 'done' && wasDone) task.completedAt = null;
         task.dueDate = modalDueDate || null;
@@ -1544,7 +1887,7 @@
 
   function startApp(){
     document.getElementById('todayLabel').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-    if (state.view === 'board' || state.view === 'calendar') switchTab(state.view);
+    if (['board','calendar','upcoming','archive'].includes(state.view)) switchTab(state.view);
     renderAll();
   }
 
