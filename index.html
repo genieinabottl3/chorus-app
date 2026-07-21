@@ -151,6 +151,20 @@
     border-radius: 999px;
     border: 1px solid currentColor;
   }
+  .gear-btn {
+    border: 1.5px solid var(--border);
+    background: var(--card);
+    border-radius: 50%;
+    width: 30px; height: 30px;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 14px;
+    line-height: 1;
+  }
+  .pm-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-dim); margin: 14px 0 4px; font-weight: 700; }
+  .pm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .pm-name { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .pm-empty { font-size: 12.5px; color: var(--text-dim); padding: 6px 0; }
 
   /* Upcoming view */
   .upcoming-group { margin-bottom: 18px; }
@@ -272,6 +286,7 @@
   .chore-main { flex: 1; min-width: 0; }
   .chore-name-row { display: flex; align-items: center; gap: 6px; }
   .chore-name { font-size: 14.5px; font-weight: 550; }
+  .task-num { font-size: 11px; font-weight: 700; color: var(--text-dim); }
   .chore-row.done .chore-name { text-decoration: line-through; }
   .chore-desc {
     font-size: 12px;
@@ -608,7 +623,7 @@
   </header>
   <div class="date" id="todayLabel" style="margin-bottom:12px;"></div>
 
-  <input type="text" class="search-input" id="searchInput" placeholder="Search all tasks — every profile, everything…" autocomplete="off">
+  <input type="text" class="search-input" id="searchInput" placeholder="Search all tasks" autocomplete="off">
 
   <div class="profile-bar" id="profileBar"></div>
 
@@ -652,6 +667,9 @@
   let accessToken = null;
   let spreadsheetId = null;
   let syncTimer = null;
+  let tokenExpiryTimer = null;
+  let pendingTokenResolve = null;
+  let lastWrittenRows = 0;
 
   // ---------------- Auth / sync plumbing ----------------
   function setSyncStatus(label, cls){
@@ -670,16 +688,66 @@
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
       scope: SCOPES,
-      callback: async (resp) => {
-        if (resp.error) {
-          showAuthError('Sign-in failed: ' + resp.error);
-          return;
+      callback: (resp) => {
+        const resolve = pendingTokenResolve; pendingTokenResolve = null;
+        if (resp && resp.access_token) {
+          accessToken = resp.access_token;
+          scheduleRefresh(parseInt(resp.expires_in, 10) || 3600);
+          if (resolve) resolve(true);
+        } else {
+          if (resolve) resolve(false);
         }
-        accessToken = resp.access_token;
-        await afterSignIn();
+      },
+      error_callback: () => {
+        const resolve = pendingTokenResolve; pendingTokenResolve = null;
+        if (resolve) resolve(false);
       }
     });
     document.getElementById('googleSignInBtn').disabled = false;
+  }
+
+  // Request a token. interactive=true shows Google's account/consent UI;
+  // interactive=false attempts a silent renewal (no UI if the Google session is still valid).
+  function requestToken(interactive){
+    return new Promise((resolve) => {
+      if (!tokenClient) { resolve(false); return; }
+      pendingTokenResolve = resolve;
+      try {
+        tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+      } catch(e) { pendingTokenResolve = null; resolve(false); }
+    });
+  }
+
+  // Silently renew the token a few minutes before it expires, so the
+  // session doesn't drop out from under the user mid-use.
+  function scheduleRefresh(ttlSeconds){
+    clearTimeout(tokenExpiryTimer);
+    const refreshInMs = Math.max(ttlSeconds - 300, 60) * 1000;
+    tokenExpiryTimer = setTimeout(() => { requestToken(false); }, refreshInMs);
+  }
+
+  function forceReauth(){
+    clearTimeout(tokenExpiryTimer);
+    accessToken = null;
+    document.getElementById('appRoot').style.display = 'none';
+    document.getElementById('authGate').style.display = 'flex';
+    showAuthError('Your session expired — please sign in again.');
+  }
+
+  // fetch wrapper: attaches the token, and if it's expired (401) silently
+  // renews once and retries. Only falls back to the sign-in screen if renewal fails.
+  async function authedFetch(url, opts){
+    opts = opts || {};
+    const run = () => fetch(url, Object.assign({}, opts, {
+      headers: Object.assign({}, opts.headers || {}, { Authorization: 'Bearer ' + accessToken })
+    }));
+    let res = await run();
+    if (res.status === 401) {
+      const ok = await requestToken(false);
+      if (ok) { res = await run(); }
+      else { forceReauth(); throw new Error('session-expired'); }
+    }
+    return res;
   }
 
   function showAuthError(msg){
@@ -688,13 +756,16 @@
     el.style.display = 'block';
   }
 
-  document.getElementById('googleSignInBtn').addEventListener('click', () => {
+  document.getElementById('googleSignInBtn').addEventListener('click', async () => {
     document.getElementById('authError').style.display = 'none';
     if (!tokenClient) { showAuthError('Still loading Google sign-in, try again in a second.'); return; }
-    tokenClient.requestAccessToken({ prompt: 'consent' });
+    const ok = await requestToken(true);
+    if (ok) await afterSignIn();
+    else showAuthError('Sign-in was cancelled or failed. Please try again.');
   });
 
   document.getElementById('signOutBtn').addEventListener('click', () => {
+    clearTimeout(tokenExpiryTimer);
     if (accessToken && window.google) google.accounts.oauth2.revoke(accessToken, () => {});
     accessToken = null; spreadsheetId = null; state = null;
     document.getElementById('appRoot').style.display = 'none';
@@ -703,7 +774,7 @@
 
   async function fetchUserEmail(){
     try {
-      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + accessToken } });
+      const res = await authedFetch('https://www.googleapis.com/oauth2/v3/userinfo');
       const data = await res.json();
       document.getElementById('userEmail').textContent = data.email || '';
     } catch(e){ console.warn('userinfo failed', e); }
@@ -711,15 +782,13 @@
 
   async function ensureSpreadsheet(){
     const q = encodeURIComponent(`name='${SHEET_TITLE}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`);
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
-      headers: { Authorization: 'Bearer ' + accessToken }
-    });
+    const res = await authedFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`);
     if (!res.ok) throw new Error('Drive lookup failed (HTTP ' + res.status + '). Is the Google Drive API enabled in your Cloud project?');
     const data = await res.json();
     if (data.files && data.files.length > 0) { spreadsheetId = data.files[0].id; return; }
-    const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+    const createRes = await authedFetch('https://sheets.googleapis.com/v4/spreadsheets', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ properties: { title: SHEET_TITLE } })
     });
     if (!createRes.ok) throw new Error('Could not create sheet (HTTP ' + createRes.status + '). Is the Google Sheets API enabled in your Cloud project?');
@@ -727,31 +796,78 @@
     spreadsheetId = createData.spreadsheetId;
   }
 
+  // Storage layout (schema 2):
+  //   Row 1, col A : meta JSON = the whole app state EXCEPT tasks
+  //   Rows 2..N    : one row per profile → [ profileId, JSON array of that profile's tasks ]
+  // This keeps each profile within its own ~50k-char cell budget rather than
+  // cramming everything into a single cell. The old layout (entire state as one
+  // JSON blob in A1) is detected on read and migrated automatically on next save.
   async function pullStateFromSheet(){
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1`, {
-      headers: { Authorization: 'Bearer ' + accessToken }
-    });
+    const res = await authedFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:B100000`);
     if (!res.ok) throw new Error('Read failed (HTTP ' + res.status + ')');
     const data = await res.json();
-    const cell = data.values && data.values[0] && data.values[0][0];
-    if (!cell) return null;
-    try { return JSON.parse(cell); } catch(e){ console.warn('Corrupt sheet data, starting fresh', e); return null; }
+    const rows = data.values || [];
+    if (!rows.length || !rows[0] || !rows[0][0]) return null;
+    let meta;
+    try { meta = JSON.parse(rows[0][0]); }
+    catch(e){ console.warn('Corrupt meta cell, starting fresh', e); return null; }
+
+    // Old format: A1 held the full state (has a tasks array). Return as-is;
+    // it'll be rewritten in the new layout on the next save.
+    if (Array.isArray(meta.tasks)) { lastWrittenRows = 1; return meta; }
+
+    // New format: reassemble tasks from the per-profile rows.
+    const tasks = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || !r[1]) continue;
+      try {
+        const arr = JSON.parse(r[1]);
+        if (Array.isArray(arr)) arr.forEach(t => tasks.push(t));
+      } catch(e){ console.warn('Skipping unreadable profile row ' + i, e); }
+    }
+    meta.tasks = tasks;
+    lastWrittenRows = rows.length;
+    return meta;
   }
 
   async function pushStateToSheet(){
     if (!spreadsheetId || !state) return;
     setSyncStatus('Saving…', 'busy');
     try {
-      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1?valueInputOption=RAW`, {
+      const meta = Object.assign({}, state);
+      delete meta.tasks;
+      meta.schema = 2;
+
+      // Group tasks by profile; keep a row for every known profile (so empty
+      // profiles persist) and for any orphan profile ids referenced by tasks.
+      const groups = {};
+      (state.profiles || []).forEach(p => { groups[p.id] = []; });
+      (state.tasks || []).forEach(t => {
+        const pid = t.profile || 'personal';
+        (groups[pid] = groups[pid] || []).push(t);
+      });
+
+      const rows = [[ JSON.stringify(meta) ]];
+      Object.keys(groups).forEach(pid => { rows.push([ pid, JSON.stringify(groups[pid]) ]); });
+
+      const dataRows = rows.length;
+      // Pad with empty rows to overwrite any leftover rows from a previously
+      // larger write (e.g. after deleting a profile), so no stale data lingers.
+      const target = Math.max(dataRows, lastWrittenRows);
+      while (rows.length < target) rows.push(['', '']);
+
+      const res = await authedFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:B${rows.length}?valueInputOption=RAW`, {
         method: 'PUT',
-        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [[JSON.stringify(state)]] })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: rows })
       });
       if (!res.ok) throw new Error('Write failed (HTTP ' + res.status + ')');
+      lastWrittenRows = dataRows;
       setSyncStatus('Saved', 'ok');
     } catch(e) {
       console.error(e);
-      setSyncStatus('Sync error', 'err');
+      if (e.message !== 'session-expired') setSyncStatus('Sync error', 'err');
     }
   }
 
@@ -768,14 +884,23 @@
     if (!parsed.selectedDate) parsed.selectedDate = fmtDate(now);
     if (!parsed.expandedTasks) parsed.expandedTasks = [];
     if (!parsed.profiles || !parsed.profiles.length) parsed.profiles = defaultProfiles();
+    parsed.profiles.forEach(p => { if (p.archived === undefined) p.archived = false; });
     if (!parsed.activeProfile || (parsed.activeProfile !== 'all' && !parsed.profiles.some(p => p.id === parsed.activeProfile))) parsed.activeProfile = parsed.profiles[0].id;
     (parsed.tasks||[]).forEach(t => {
       if (t.description === undefined) t.description = '';
       if (!t.subtasks) t.subtasks = [];
       if (!t.updatedAt) t.updatedAt = t.createdAt || Date.now();
       if (t.type === 'adhoc' && t.completedAt === undefined) t.completedAt = (t.column === 'done') ? t.updatedAt : null;
-      if (!t.profile) t.profile = parsed.activeProfile;
+      if (!t.profile) t.profile = (parsed.activeProfile === 'all') ? (parsed.profiles[0] || {id:'personal'}).id : parsed.activeProfile;
     });
+    // Backfill sequential task numbers for any tasks created before this feature.
+    let maxNum = 0;
+    (parsed.tasks||[]).forEach(t => { if (typeof t.num === 'number' && t.num > maxNum) maxNum = t.num; });
+    (parsed.tasks||[])
+      .filter(t => typeof t.num !== 'number')
+      .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
+      .forEach(t => { t.num = ++maxNum; });
+    if (!parsed.nextTaskNumber || parsed.nextTaskNumber <= maxNum) parsed.nextTaskNumber = maxNum + 1;
     return parsed;
   }
 
@@ -799,7 +924,7 @@
   function genId(prefix){ return prefix + '_' + Date.now() + '_' + Math.random().toString(36).slice(2,7); }
 
   function defaultProfiles(){
-    return [ { id: 'personal', name: 'Personal' }, { id: 'work', name: 'Work' } ];
+    return [ { id: 'personal', name: 'Personal', archived: false }, { id: 'work', name: 'Work', archived: false } ];
   }
 
   function defaultState(){
@@ -807,13 +932,14 @@
     const today = new Date();
     return {
       tasks: [
-        { id: 'demo1', name: 'Wash dishes', description: '', tags: ['chores'], profile: 'personal', type: 'recurring', recurrence: { freq: 'daily' }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
-        { id: 'demo2', name: 'Take bins out', description: '', tags: ['chores'], profile: 'personal', type: 'recurring', recurrence: { freq: 'weekly', weekdays: [2] }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
-        { id: 'demo4', name: 'Submit expense report', description: '', tags: ['office'], profile: 'work', type: 'adhoc', column: 'todo', dueDate: null, completedAt: null, subtasks: [], createdAt: now, updatedAt: now }
+        { id: 'demo1', num: 1, name: 'Wash dishes', description: '', tags: ['chores'], profile: 'personal', type: 'recurring', recurrence: { freq: 'daily' }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
+        { id: 'demo2', num: 2, name: 'Take bins out', description: '', tags: ['chores'], profile: 'personal', type: 'recurring', recurrence: { freq: 'weekly', weekdays: [2] }, completedDates: [], subtasks: [], createdAt: now, updatedAt: now },
+        { id: 'demo4', num: 3, name: 'Submit expense report', description: '', tags: ['office'], profile: 'work', type: 'adhoc', column: 'todo', dueDate: null, completedAt: null, subtasks: [], createdAt: now, updatedAt: now }
       ],
       activeTag: 'all',
       profiles: defaultProfiles(),
       activeProfile: 'personal',
+      nextTaskNumber: 4,
       view: 'today',
       calendarYear: today.getFullYear(),
       calendarMonth: today.getMonth(),
@@ -898,13 +1024,17 @@
   }
 
   const PROFILE_PALETTE = ['#4a7fc9','#c96f4a','#4c8c6b','#a45ac9','#c9a24a','#c94a6f'];
+  const MAX_ACTIVE_PROFILES = 10;
   function profileById(id){ return (state.profiles||[]).find(p => p.id === id); }
   function profileColor(id){
     const idx = (state.profiles||[]).findIndex(p => p.id === id);
     return PROFILE_PALETTE[Math.max(0, idx) % PROFILE_PALETTE.length];
   }
+  function isProfileArchived(id){ const p = profileById(id); return !!(p && p.archived); }
+  function activeProfilesList(){ return (state.profiles||[]).filter(p => !p.archived); }
+  function archivedProfilesList(){ return (state.profiles||[]).filter(p => p.archived); }
   function taskMatchesProfile(task){
-    if (state.activeProfile === 'all') return true;
+    if (state.activeProfile === 'all') return !isProfileArchived(task.profile);
     return task.profile === state.activeProfile;
   }
   function profileBadgeHtml(task){
@@ -917,11 +1047,14 @@
   function renderProfileBar(){
     const bar = document.getElementById('profileBar');
     if (!bar) return;
+    const active = activeProfilesList();
+    const atCap = active.length >= MAX_ACTIVE_PROFILES;
     let html = `<button class="profile-chip ${state.activeProfile==='all'?'active':''}" data-profile="all">All</button>`;
-    (state.profiles||[]).forEach(p => {
+    active.forEach(p => {
       html += `<button class="profile-chip ${state.activeProfile===p.id?'active':''}" data-profile="${p.id}">${escapeHtml(p.name)}</button>`;
     });
-    html += `<button class="profile-add-btn" id="profileAddBtn" title="Add profile">+</button>`;
+    html += `<button class="profile-add-btn" id="profileAddBtn" title="${atCap ? 'Max ' + MAX_ACTIVE_PROFILES + ' active profiles — archive one first' : 'Add profile'}"${atCap ? ' disabled style="opacity:.4; cursor:not-allowed;"' : ''}>+</button>`;
+    html += `<button class="gear-btn" id="profileManageBtn" title="Manage profiles">⚙</button>`;
     bar.innerHTML = html;
     bar.querySelectorAll('.profile-chip').forEach(el => {
       el.addEventListener('click', () => {
@@ -930,31 +1063,80 @@
         renderAll();
       });
     });
-    document.getElementById('profileAddBtn').addEventListener('click', () => {
-      const addBtn = document.getElementById('profileAddBtn');
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'profile-add-input';
-      input.placeholder = 'Profile name';
-      addBtn.replaceWith(input);
-      input.focus();
-      let committed = false;
-      function commit(){
-        if (committed) return;
-        committed = true;
-        const v = input.value.trim();
-        if (v) {
-          const id = genId('profile');
-          state.profiles.push({ id, name: v });
-          state.activeProfile = id;
-          save();
+    if (!atCap) {
+      document.getElementById('profileAddBtn').addEventListener('click', () => {
+        const addBtn = document.getElementById('profileAddBtn');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'profile-add-input';
+        input.placeholder = 'Profile name';
+        addBtn.replaceWith(input);
+        input.focus();
+        let committed = false;
+        function commit(){
+          if (committed) return;
+          committed = true;
+          const v = input.value.trim();
+          if (v) {
+            const id = genId('profile');
+            state.profiles.push({ id, name: v, archived: false });
+            state.activeProfile = id;
+            save();
+          }
+          renderProfileBar();
+          renderAll();
         }
-        renderProfileBar();
-        renderAll();
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); else if (e.key === 'Escape') { committed = true; renderProfileBar(); } });
+        input.addEventListener('blur', commit);
+      });
+    }
+    document.getElementById('profileManageBtn').addEventListener('click', openProfileManager);
+  }
+
+  function openProfileManager(){
+    const active = activeProfilesList();
+    const archived = archivedProfilesList();
+    const html = `
+      <div class="overlay" id="overlay">
+        <div class="modal">
+          <h2>Manage profiles</h2>
+          <div class="pm-section-title">Active (${active.length}/${MAX_ACTIVE_PROFILES})</div>
+          ${active.map(p => `
+            <div class="pm-row">
+              <span class="pm-name"><span style="width:8px;height:8px;border-radius:50%;background:${profileColor(p.id)};display:inline-block;"></span>${escapeHtml(p.name)}</span>
+              <button class="link-btn" data-archive="${p.id}"${active.length<=1 ? ' disabled style="opacity:.4; cursor:not-allowed; color:var(--text-dim);"' : ''}>Archive</button>
+            </div>`).join('')}
+          <div class="pm-section-title">Archived</div>
+          ${archived.length ? archived.map(p => `
+            <div class="pm-row">
+              <span class="pm-name" style="color:var(--text-dim);">${escapeHtml(p.name)}</span>
+              <button class="link-btn" style="color:var(--green);" data-restore="${p.id}">Restore</button>
+            </div>`).join('') : `<div class="pm-empty">No archived profiles yet.</div>`}
+          <div class="modal-actions">
+            <div class="hint">Archived profiles stay searchable and can be restored anytime.</div>
+            <div class="btn-group"><button class="secondary" id="pmClose">Close</button></div>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('modalRoot').innerHTML = html;
+    document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
+    document.getElementById('pmClose').addEventListener('click', closeModal);
+    document.querySelectorAll('[data-archive]').forEach(b => b.addEventListener('click', () => {
+      const p = profileById(b.dataset.archive);
+      if (!p || activeProfilesList().length <= 1) return;
+      p.archived = true;
+      if (state.activeProfile === p.id) {
+        const first = activeProfilesList()[0];
+        state.activeProfile = first ? first.id : 'all';
       }
-      input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); else if (e.key === 'Escape') { committed = true; renderProfileBar(); } });
-      input.addEventListener('blur', commit);
-    });
+      save(); openProfileManager(); renderAll();
+    }));
+    document.querySelectorAll('[data-restore]').forEach(b => b.addEventListener('click', () => {
+      const p = profileById(b.dataset.restore);
+      if (!p) return;
+      p.archived = false;
+      save(); openProfileManager(); renderAll();
+    }));
   }
 
   function renderTagbar(){
@@ -1002,6 +1184,10 @@
   function descHtml(task){
     if (!task.description) return '';
     return `<div class="chore-desc" title="${escapeHtml(task.description)}">${escapeHtml(task.description)}</div>`;
+  }
+
+  function taskNumHtml(task){
+    return (typeof task.num === 'number') ? `<span class="task-num">#${task.num}</span> ` : '';
   }
 
   function timestampsHtml(task){
@@ -1104,7 +1290,7 @@
           <div class="check ${done?'checked':''}" data-action="toggle" data-id="${task.id}">${done?'✓':''}</div>
           <div class="chore-main">
             <div class="chore-name-row">
-              <div class="chore-name">${escapeHtml(task.name)}</div>
+              <div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>
               ${expandToggleHtml(task)}
               ${subtaskBadgeHtml(task)}
             </div>
@@ -1158,7 +1344,7 @@
         items.forEach(task => {
           html += `<div class="card" draggable="true" data-id="${task.id}">
             <div class="chore-name-row">
-              <div class="chore-name">${escapeHtml(task.name)}</div>
+              <div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>
               ${expandToggleHtml(task)}
               ${subtaskBadgeHtml(task)}
             </div>
@@ -1299,7 +1485,7 @@
               <div class="check ${done?'checked':''}" data-action="toggle-day" data-id="${task.id}">${done?'✓':''}</div>
               <div class="chore-main">
                 <div class="chore-name-row">
-                  <div class="chore-name">${escapeHtml(task.name)}</div>
+                  <div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>
                   ${expandToggleHtml(task)}
                   ${subtaskBadgeHtml(task)}
                 </div>
@@ -1314,7 +1500,7 @@
             <div class="chore-row" data-id="${task.id}">
               <div class="chore-main">
                 <div class="chore-name-row">
-                  <div class="chore-name">${escapeHtml(task.name)}</div>
+                  <div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>
                   ${expandToggleHtml(task)}
                   ${subtaskBadgeHtml(task)}
                 </div>
@@ -1378,7 +1564,7 @@
               <div class="check ${done?'checked':''}" data-action="toggle-upcoming" data-id="${task.id}" data-date="${key}">${done?'✓':''}</div>
               <div class="chore-main">
                 <div class="chore-name-row">
-                  <div class="chore-name">${escapeHtml(task.name)}</div>
+                  <div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>
                   ${expandToggleHtml(task)}
                   ${subtaskBadgeHtml(task)}
                 </div>
@@ -1393,7 +1579,7 @@
             <div class="chore-row" data-id="${task.id}">
               <div class="chore-main">
                 <div class="chore-name-row">
-                  <div class="chore-name">${escapeHtml(task.name)}</div>
+                  <div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>
                   ${expandToggleHtml(task)}
                   ${subtaskBadgeHtml(task)}
                 </div>
@@ -1447,7 +1633,7 @@
       html += `
         <div class="chore-row" data-id="${task.id}">
           <div class="chore-main">
-            <div class="chore-name-row"><div class="chore-name">${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
+            <div class="chore-name-row"><div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
             ${descHtml(task)}
             <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}</div>
             <div class="task-timestamps">${archiveLineHtml(task)}</div>
@@ -1507,7 +1693,7 @@
       html += `
         <div class="chore-row" data-id="${task.id}">
           <div class="chore-main">
-            <div class="chore-name-row"><div class="chore-name">${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
+            <div class="chore-name-row"><div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
             ${descHtml(task)}
             <div class="chore-meta">${profileBadgeHtml(task)}${tagsHtml(task)}</div>
             <div class="task-timestamps">${searchSummary(task)}</div>
@@ -1713,7 +1899,8 @@
       const description = document.getElementById('fDesc').value.trim();
       let task = editingId ? state.tasks.find(t => t.id === editingId) : null;
       if (!task) {
-        task = { id: genId('task'), createdAt: Date.now(), completedDates: [] };
+        task = { id: genId('task'), num: (state.nextTaskNumber || 1), createdAt: Date.now(), completedDates: [] };
+        state.nextTaskNumber = task.num + 1;
         state.tasks.push(task);
       }
       task.name = name;
