@@ -1310,7 +1310,7 @@
       const items = state.tasks.filter(t => {
         if (!taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
         if (t.type === 'recurring') return isDueOnDate(t, d);
-        if (t.type === 'adhoc') return t.dueDate === key;
+        if (t.type === 'adhoc') return t.dueDate === key && t.column !== 'done';
         return false;
       });
       if (items.length === 0) return;
