@@ -30,6 +30,7 @@
     --green: #4c8c6b;
     --green-light: #e2f0e8;
     --red: #b0453a;
+    --logo-gold: #b68235;
     --radius: 10px;
     --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 6px rgba(0,0,0,0.04);
   }
@@ -326,7 +327,8 @@
   .chore-main { flex: 1; min-width: 0; }
   .chore-name-row { display: flex; align-items: center; gap: 6px; }
   .chore-name { font-size: 14.5px; font-weight: 550; }
-  .task-num { font-size: 11px; font-weight: 700; color: var(--text-dim); }
+/*  .task-num { font-size: 11px; font-weight: 700; color: var(--text-dim); } */
+  .task-num { font-size: 13px; font-weight: 700; color: var(--logo-gold); }
   .chore-row.done .chore-name { text-decoration: line-through; }
   .chore-desc {
     font-size: 12px;
@@ -394,7 +396,8 @@
   .mini-check.checked { background: var(--green); border-color: var(--green); }
   .subtask-name { font-size: 12.5px; }
   .subtask-name.done { text-decoration: line-through; color: var(--text-dim); }
-  .subtask-num { font-size: 11px; font-weight: 700; color: var(--text-dim); flex: none; }
+/*  .subtask-num { font-size: 11px; font-weight: 700; color: var(--text-dim); flex: none; } */
+  .subtask-num {font-size: 11px; font-weight: 700; color: var(--logo-gold); flex: none; }
   .st-name-input { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: inherit; }
 
   /* Board view */
@@ -2105,8 +2108,8 @@
           <div class="field">
             <label>Type</label>
             <div class="type-toggle">
-              <button id="btnRecurring" class="${modalType==='recurring'?'active':''}">Recurring chore</button>
-              <button id="btnAdhoc" class="${modalType==='adhoc'?'active':''}">One-off / multi-day</button>
+              <button id="btnRecurring" class="${modalType==='recurring'?'active':''}">Repeats</button>
+              <button id="btnAdhoc" class="${modalType==='adhoc'?'active':''}">One-time</button>
             </div>
           </div>
           <div id="typeFields"></div>
