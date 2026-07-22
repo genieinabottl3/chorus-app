@@ -371,6 +371,7 @@
     padding: 2px 4px;
   }
   .task-timestamps { font-size: 10.5px; color: var(--text-dim); margin-top: 4px; }
+  .deleted-badge { font-size: 10.5px; font-weight: 700; color: var(--red); background: #f6e4e1; border-radius: 999px; padding: 2px 8px; }
   .subtask-badge {
     font-size: 10.5px;
     font-weight: 700;
@@ -733,6 +734,7 @@
   // =====================================================================
 
   const PALETTE = ['#c96f4a','#4c8c6b','#4a7fc9','#a45ac9','#c9a24a','#c94a6f','#4ac9b0','#7a766f'];
+  const DELETED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // deleted tasks auto-purge after 30 days
   const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -968,17 +970,21 @@
       delete meta.tasks;
       meta.schema = 2;
 
-      // Group tasks by profile; keep a row for every known profile (so empty
-      // profiles persist) and for any orphan profile ids referenced by tasks.
+      // Group active tasks by profile (empty profiles kept so they persist);
+      // deleted tasks go into a single dedicated '__deleted__' row so they never
+      // consume an active profile's cell budget.
       const groups = {};
       (state.profiles || []).forEach(p => { groups[p.id] = []; });
+      const deletedTasks = [];
       (state.tasks || []).forEach(t => {
+        if (t.deletedAt) { deletedTasks.push(t); return; }
         const pid = t.profile || 'personal';
         (groups[pid] = groups[pid] || []).push(t);
       });
 
       const rows = [[ JSON.stringify(meta) ]];
       Object.keys(groups).forEach(pid => { rows.push([ pid, JSON.stringify(groups[pid]) ]); });
+      rows.push([ '__deleted__', JSON.stringify(deletedTasks) ]);
 
       const dataRows = rows.length;
       // Pad with empty rows to overwrite any leftover rows from a previously
@@ -1030,6 +1036,8 @@
       .sort((a,b) => (a.createdAt||0) - (b.createdAt||0))
       .forEach(t => { t.num = ++maxNum; });
     if (!parsed.nextTaskNumber || parsed.nextTaskNumber <= maxNum) parsed.nextTaskNumber = maxNum + 1;
+    // Auto-purge deleted tasks older than the retention window (self-emptying trash)
+    parsed.tasks = (parsed.tasks||[]).filter(t => !(t.deletedAt && (Date.now() - t.deletedAt) > DELETED_RETENTION_MS));
     return parsed;
   }
 
@@ -1206,6 +1214,8 @@
     bar.querySelectorAll('.profile-chip').forEach(el => {
       el.addEventListener('click', () => {
         state.activeProfile = el.dataset.profile;
+        const p = profileById(el.dataset.profile);
+        if (p && p.defaultView && tabs[p.defaultView]) switchTab(p.defaultView);
         save();
         renderAll();
       });
@@ -1278,6 +1288,7 @@
               <span class="pm-actions">
                 <button class="icon-btn" data-up="${p.id}" title="Move up"${k===0 ? ' disabled style="opacity:.3; cursor:not-allowed;"' : ''}>↑</button>
                 <button class="icon-btn" data-down="${p.id}" title="Move down"${k===active.length-1 ? ' disabled style="opacity:.3; cursor:not-allowed;"' : ''}>↓</button>
+                <button class="icon-btn" data-props="${p.id}" title="Edit properties">✎</button>
                 <button class="link-btn" data-archive="${p.id}"${active.length<=1 ? ' disabled style="opacity:.4; cursor:not-allowed; color:var(--text-dim);"' : ''}>Archive</button>
               </span>
             </div>`).join('')}
@@ -1312,6 +1323,7 @@
       p.archived = false;
       save(); openProfileManager(); renderAll();
     }));
+    document.querySelectorAll('[data-props]').forEach(b => b.addEventListener('click', () => openProfileProps(b.dataset.props)));
     document.querySelectorAll('[data-up]').forEach(b => b.addEventListener('click', () => {
       const list = activeProfilesList();
       const k = list.findIndex(p => p.id === b.dataset.up);
@@ -1322,6 +1334,49 @@
       const k = list.findIndex(p => p.id === b.dataset.down);
       if (k > -1 && k < list.length - 1) { swapProfiles(list[k].id, list[k+1].id); save(); openProfileManager(); renderAll(); }
     }));
+  }
+
+  const VIEW_LABELS = { today: 'Today', upcoming: 'Upcoming', board: 'Board', calendar: 'Calendar', archive: 'Archive' };
+  function openProfileProps(pid){
+    const p = profileById(pid);
+    if (!p) return;
+    const viewOpts = ['', 'today', 'upcoming', 'board', 'calendar', 'archive'].map(v =>
+      `<option value="${v}" ${((p.defaultView||'') === v) ? 'selected' : ''}>${v === '' ? 'None (stay on current tab)' : VIEW_LABELS[v]}</option>`).join('');
+    document.getElementById('modalRoot').innerHTML = `
+      <div class="overlay" id="overlay">
+        <div class="modal" style="width:380px;">
+          <h2>Profile properties</h2>
+          <div class="field">
+            <label>Profile name</label>
+            <input type="text" id="ppName" value="${escapeHtml(p.name)}">
+          </div>
+          <div class="field">
+            <label>Default view when selected</label>
+            <select id="ppView">${viewOpts}</select>
+          </div>
+          <div class="field">
+            <label>Description <span style="font-weight:400; text-transform:none;">(only shown here)</span></label>
+            <textarea id="ppDesc" rows="2" placeholder="What's this profile for?">${escapeHtml(p.description||'')}</textarea>
+          </div>
+          <div class="modal-actions">
+            <div><button class="link-btn" id="ppBack">← Back</button></div>
+            <div class="btn-group"><button class="secondary" id="ppCancel">Cancel</button><button class="primary" id="ppSave">Save</button></div>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
+    document.getElementById('ppCancel').addEventListener('click', closeModal);
+    document.getElementById('ppBack').addEventListener('click', openProfileManager);
+    document.getElementById('ppSave').addEventListener('click', () => {
+      const nm = document.getElementById('ppName').value.trim();
+      if (nm) p.name = nm;
+      const dv = document.getElementById('ppView').value;
+      if (dv) p.defaultView = dv; else delete p.defaultView;
+      const ds = document.getElementById('ppDesc').value.trim();
+      if (ds) p.description = ds; else delete p.description;
+      save(); openProfileManager(); renderAll();
+    });
+    document.getElementById('ppName').focus();
   }
 
   function renderTagbar(){
@@ -1537,7 +1592,7 @@
 
   function renderToday(){
     const container = document.getElementById('todayView');
-    const due = state.tasks.filter(t => t.type === 'recurring' && isDueToday(t) && taskMatchesFilter(t) && taskMatchesProfile(t));
+    const due = state.tasks.filter(t => t.type === 'recurring' && !t.deletedAt && isDueToday(t) && taskMatchesFilter(t) && taskMatchesProfile(t));
     if (due.length === 0) {
       container.innerHTML = `<div class="today-empty">Nothing due today${state.activeTag!=='all' ? ' for "'+escapeHtml(state.activeTag)+'"' : ''}. 🎉</div>`;
       return;
@@ -1594,7 +1649,7 @@
 
   function renderBoard(){
     const container = document.getElementById('boardView');
-    const adhoc = state.tasks.filter(t => t.type === 'adhoc' && taskMatchesFilter(t) && taskMatchesProfile(t));
+    const adhoc = state.tasks.filter(t => t.type === 'adhoc' && !t.deletedAt && taskMatchesFilter(t) && taskMatchesProfile(t));
     let html = '<div class="board">';
     COLUMNS.forEach(col => {
       const items = adhoc.filter(t => (t.column || 'todo') === col.key);
@@ -1657,7 +1712,7 @@
   function getTasksForDate(dateObj){
     const key = fmtDate(dateObj);
     return state.tasks.filter(t => {
-      if (!taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
+      if (t.deletedAt || !taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
       if (t.type === 'recurring') return isDueOnDate(t, dateObj);
       if (t.type === 'adhoc') return t.dueDate === key;
       return false;
@@ -1804,7 +1859,7 @@
     days.forEach(d => {
       const key = fmtDate(d);
       const items = state.tasks.filter(t => {
-        if (!taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
+        if (t.deletedAt || !taskMatchesFilter(t) || !taskMatchesProfile(t)) return false;
         if (t.type === 'recurring') return isDueOnDate(t, d);
         if (t.type === 'adhoc') return t.dueDate === key && t.column !== 'done';
         return false;
@@ -1884,29 +1939,86 @@
 
   function renderArchive(){
     const container = document.getElementById('archiveView');
-    const done = state.tasks.filter(t => t.type === 'adhoc' && t.column === 'done' && taskMatchesFilter(t) && taskMatchesProfile(t));
+    const done = state.tasks.filter(t => t.type === 'adhoc' && t.column === 'done' && !t.deletedAt && taskMatchesFilter(t) && taskMatchesProfile(t));
     done.sort((a,b) => (b.completedAt||0) - (a.completedAt||0));
-    if (done.length === 0) {
-      container.innerHTML = `<div class="today-empty">No completed one-off tasks yet.</div>`;
+    const deleted = state.tasks.filter(t => t.deletedAt && taskMatchesFilter(t) && taskMatchesProfile(t));
+    deleted.sort((a,b) => (b.deletedAt||0) - (a.deletedAt||0));
+
+    if (done.length === 0 && deleted.length === 0) {
+      container.innerHTML = `<div class="today-empty">Nothing archived yet — completed and deleted tasks will show here.</div>`;
       return;
     }
-    let html = '<div class="today-list">';
-    done.forEach(task => {
-      html += `
-        <div class="chore-row" data-id="${task.id}">
-          <div class="chore-main">
-            <div class="chore-name-row"><div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
-            ${descHtml(task)}
-            <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}</div>
-            <div class="task-timestamps">${archiveLineHtml(task)}</div>
-          </div>
-          <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
-        </div>`;
-    });
-    html += '</div>';
+
+    let html = '';
+    html += `<div class="pm-section-title">Completed (${done.length})</div>`;
+    if (done.length === 0) {
+      html += `<div class="pm-empty">No completed one-off tasks yet.</div>`;
+    } else {
+      html += '<div class="today-list">';
+      done.forEach(task => {
+        html += `
+          <div class="chore-row" data-id="${task.id}">
+            <div class="chore-main">
+              <div class="chore-name-row"><div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
+              ${descHtml(task)}
+              <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}</div>
+              <div class="task-timestamps">${archiveLineHtml(task)}</div>
+            </div>
+            <div class="row-actions"><button class="icon-btn" data-action="edit" data-id="${task.id}">✎</button></div>
+          </div>`;
+      });
+      html += '</div>';
+    }
+    html += `<div class="pm-section-title" style="margin-top:18px; display:flex; align-items:center; justify-content:space-between;">
+      <span>Deleted (${deleted.length})</span>
+      ${deleted.length ? `<button class="link-btn" id="emptyDeletedBtn">Empty deleted</button>` : ''}
+    </div>
+    ${deleted.length ? `<div class="hint" style="margin:-2px 0 6px;">Deleted tasks auto-remove after 30 days.</div>` : ''}`;
+    if (deleted.length === 0) {
+      html += `<div class="pm-empty">No deleted tasks.</div>`;
+    } else {
+      html += '<div class="today-list">';
+      deleted.forEach(task => {
+        html += `
+          <div class="chore-row done" data-id="${task.id}">
+            <div class="chore-main">
+              <div class="chore-name-row"><div class="chore-name">${taskNumHtml(task)}${escapeHtml(task.name)}</div>${subtaskBadgeHtml(task)}</div>
+              ${descHtml(task)}
+              <div class="chore-meta">${state.activeProfile==='all'?profileBadgeHtml(task):''}${tagsHtml(task)}<span class="deleted-badge">Deleted ${formatDateShort(task.deletedAt)}</span></div>
+            </div>
+            <div class="row-actions">
+              <button class="link-btn" style="color:var(--green);" data-restore-task="${task.id}">Restore</button>
+              <button class="link-btn" data-purge-task="${task.id}">Delete permanently</button>
+            </div>
+          </div>`;
+      });
+      html += '</div>';
+    }
     container.innerHTML = html;
+
     container.querySelectorAll('[data-action="edit"]').forEach(el => {
       el.addEventListener('click', () => openModal(state.tasks.find(t => t.id === el.dataset.id)));
+    });
+    container.querySelectorAll('[data-restore-task]').forEach(el => {
+      el.addEventListener('click', () => {
+        const task = state.tasks.find(t => t.id === el.dataset.restoreTask);
+        if (task) { delete task.deletedAt; task.updatedAt = Date.now(); }
+        save(); renderArchive(); renderAll();
+      });
+    });
+    container.querySelectorAll('[data-purge-task]').forEach(el => {
+      el.addEventListener('click', () => {
+        if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Confirm?'; return; }
+        state.tasks = state.tasks.filter(t => t.id !== el.dataset.purgeTask);
+        save(); renderArchive(); renderAll();
+      });
+    });
+    const eb = container.querySelector('#emptyDeletedBtn');
+    if (eb) eb.addEventListener('click', () => {
+      if (eb.dataset.confirm !== '1') { eb.dataset.confirm = '1'; eb.textContent = 'Confirm empty?'; return; }
+      const ids = new Set(deleted.map(t => t.id));
+      state.tasks = state.tasks.filter(t => !ids.has(t.id));
+      save(); renderArchive(); renderAll();
     });
   }
 
@@ -1946,6 +2058,7 @@
     const q = searchQuery.trim().toLowerCase();
     if (!q) { el.innerHTML = ''; return; }
     const matches = state.tasks.filter(t => {
+      if (t.deletedAt) return false;
       const hay = (t.name + ' ' + (t.description||'') + ' ' + (t.tags||[]).join(' ') + ' ' + ((profileById(t.profile)||{}).name||'')).toLowerCase();
       return hay.includes(q);
     });
@@ -2156,7 +2269,8 @@
 
     if (editingId) {
       document.getElementById('deleteBtn').addEventListener('click', () => {
-        state.tasks = state.tasks.filter(t => t.id !== editingId);
+        const task = state.tasks.find(t => t.id === editingId);
+        if (task) { task.deletedAt = Date.now(); task.updatedAt = Date.now(); }
         save(); closeModal(); renderAll();
       });
     }
