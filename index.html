@@ -112,6 +112,7 @@
   header.top h1 { font-size: 20px; margin: 0; font-weight: 650; }
   header.top .date { font-size: 13px; color: var(--text-dim); }
   header.top .tagline { font-size: 11.5px; color: var(--text-dim); font-weight: 500; margin-top: 4px; }
+  .welcome { font-size: 16px; font-weight: 650; margin-bottom: 2px; }
   .account-bar { display: flex; align-items: center; gap: 10px; }
 
   /* Chorus logo lockup */
@@ -147,6 +148,11 @@
     color: var(--text-dim);
   }
   .profile-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+  .profile-chip.reorderable { cursor: grab; }
+  .profile-chip.dragging { opacity: 0.4; }
+  .profile-chip.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+  .profile-chip.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
+  .pm-actions { display: flex; align-items: center; gap: 4px; }
   .profile-add-btn {
     width: 30px; height: 30px;
     border-radius: 50%;
@@ -667,6 +673,7 @@
       <button class="icon-btn" id="signOutBtn">Sign out</button>
     </div>
   </header>
+  <div class="welcome" id="welcomeBanner" style="display:none;"></div>
   <div class="date" id="todayLabel" style="margin-bottom:12px;"></div>
 
   <input type="text" class="search-input" id="searchInput" placeholder="Search all tasks" autocomplete="off">
@@ -700,7 +707,7 @@
 (function(){
   // ============ CONFIG — replace after Google Cloud setup ============
   const CLIENT_ID = '264327962526-dd4evel96pn858k23p5acqppdh75dbva.apps.googleusercontent.com';
-  const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
+  const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
   const SHEET_TITLE = 'Chores App Data';
   // =====================================================================
 
@@ -716,6 +723,8 @@
   let tokenExpiryTimer = null;
   let pendingTokenResolve = null;
   let lastWrittenRows = 0;
+  let isFirstLogin = false;
+  let currentFirstName = '';
 
   // ---------------- Auth / sync plumbing ----------------
   function setSyncStatus(label, cls){
@@ -823,7 +832,28 @@
       const res = await authedFetch('https://www.googleapis.com/oauth2/v3/userinfo');
       const data = await res.json();
       document.getElementById('userEmail').textContent = data.email || '';
+      currentFirstName = data.given_name || (data.name ? data.name.split(' ')[0] : '') || '';
+      updateGreeting();
     } catch(e){ console.warn('userinfo failed', e); }
+  }
+
+  function timeGreeting(){
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    if (h < 21) return 'Good evening';
+    return 'Hello';
+  }
+
+  function updateGreeting(){
+    const wb = document.getElementById('welcomeBanner');
+    if (!wb) return;
+    const name = currentFirstName;
+    let text;
+    if (isFirstLogin) text = name ? 'Welcome, ' + name : 'Welcome';
+    else text = timeGreeting() + (name ? ', ' + name : '');
+    wb.textContent = text;
+    wb.style.display = '';
   }
 
   async function ensureSpreadsheet(){
@@ -955,6 +985,7 @@
       setSyncStatus('Connecting…', 'busy');
       await ensureSpreadsheet();
       const remote = await pullStateFromSheet();
+      isFirstLogin = !remote;
       state = remote ? migrateState(remote) : defaultState();
       document.getElementById('authGate').style.display = 'none';
       document.getElementById('appRoot').style.display = '';
@@ -1079,6 +1110,23 @@
   function isProfileArchived(id){ const p = profileById(id); return !!(p && p.archived); }
   function activeProfilesList(){ return (state.profiles||[]).filter(p => !p.archived); }
   function archivedProfilesList(){ return (state.profiles||[]).filter(p => p.archived); }
+  let dragProfileId = null;
+  function moveProfileRelative(draggedId, targetId, placeAfter){
+    const arr = state.profiles;
+    const from = arr.findIndex(p => p.id === draggedId);
+    if (from < 0) return;
+    const [item] = arr.splice(from, 1);
+    let to = arr.findIndex(p => p.id === targetId);
+    if (to < 0) { arr.splice(from, 0, item); return; }
+    if (placeAfter) to += 1;
+    arr.splice(to, 0, item);
+  }
+  function swapProfiles(idA, idB){
+    const arr = state.profiles;
+    const i = arr.findIndex(p => p.id === idA), j = arr.findIndex(p => p.id === idB);
+    if (i < 0 || j < 0) return;
+    const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  }
   function taskMatchesProfile(task){
     if (state.activeProfile === 'all') return !isProfileArchived(task.profile);
     return task.profile === state.activeProfile;
@@ -1097,7 +1145,7 @@
     const atCap = active.length >= MAX_ACTIVE_PROFILES;
     let html = `<button class="profile-chip ${state.activeProfile==='all'?'active':''}" data-profile="all">All</button>`;
     active.forEach(p => {
-      html += `<button class="profile-chip ${state.activeProfile===p.id?'active':''}" data-profile="${p.id}">${escapeHtml(p.name)}</button>`;
+      html += `<button class="profile-chip reorderable ${state.activeProfile===p.id?'active':''}" draggable="true" data-profile="${p.id}" title="Drag to reorder">${escapeHtml(p.name)}</button>`;
     });
     html += `<button class="profile-add-btn" id="profileAddBtn" title="${atCap ? 'Max ' + MAX_ACTIVE_PROFILES + ' active profiles — archive one first' : 'Add profile'}"${atCap ? ' disabled style="opacity:.4; cursor:not-allowed;"' : ''}>+</button>`;
     html += `<button class="gear-btn" id="profileManageBtn" title="Manage profiles">⚙</button>`;
@@ -1107,6 +1155,30 @@
         state.activeProfile = el.dataset.profile;
         save();
         renderAll();
+      });
+    });
+    function clearDropMarkers(){ bar.querySelectorAll('.drop-before, .drop-after').forEach(x => x.classList.remove('drop-before', 'drop-after')); }
+    bar.querySelectorAll('.reorderable').forEach(el => {
+      el.addEventListener('dragstart', e => { dragProfileId = el.dataset.profile; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+      el.addEventListener('dragend', () => { el.classList.remove('dragging'); dragProfileId = null; clearDropMarkers(); });
+      el.addEventListener('dragover', e => {
+        e.preventDefault();
+        if (!dragProfileId || el.dataset.profile === dragProfileId) return;
+        const rect = el.getBoundingClientRect();
+        const after = (e.clientX - rect.left) > rect.width / 2;
+        clearDropMarkers();
+        el.classList.add(after ? 'drop-after' : 'drop-before');
+      });
+      el.addEventListener('dragleave', () => { el.classList.remove('drop-before', 'drop-after'); });
+      el.addEventListener('drop', e => {
+        e.preventDefault();
+        const targetId = el.dataset.profile;
+        const placeAfter = el.classList.contains('drop-after');
+        clearDropMarkers();
+        if (dragProfileId && targetId && dragProfileId !== targetId) {
+          moveProfileRelative(dragProfileId, targetId, placeAfter);
+          save(); renderProfileBar(); renderAll();
+        }
       });
     });
     if (!atCap) {
@@ -1147,10 +1219,14 @@
         <div class="modal">
           <h2>Manage profiles</h2>
           <div class="pm-section-title">Active (${active.length}/${MAX_ACTIVE_PROFILES})</div>
-          ${active.map(p => `
+          ${active.map((p, k) => `
             <div class="pm-row">
               <span class="pm-name"><span style="width:8px;height:8px;border-radius:50%;background:${profileColor(p.id)};display:inline-block;"></span>${escapeHtml(p.name)}</span>
-              <button class="link-btn" data-archive="${p.id}"${active.length<=1 ? ' disabled style="opacity:.4; cursor:not-allowed; color:var(--text-dim);"' : ''}>Archive</button>
+              <span class="pm-actions">
+                <button class="icon-btn" data-up="${p.id}" title="Move up"${k===0 ? ' disabled style="opacity:.3; cursor:not-allowed;"' : ''}>↑</button>
+                <button class="icon-btn" data-down="${p.id}" title="Move down"${k===active.length-1 ? ' disabled style="opacity:.3; cursor:not-allowed;"' : ''}>↓</button>
+                <button class="link-btn" data-archive="${p.id}"${active.length<=1 ? ' disabled style="opacity:.4; cursor:not-allowed; color:var(--text-dim);"' : ''}>Archive</button>
+              </span>
             </div>`).join('')}
           <div class="pm-section-title">Archived</div>
           ${archived.length ? archived.map(p => `
@@ -1182,6 +1258,16 @@
       if (!p) return;
       p.archived = false;
       save(); openProfileManager(); renderAll();
+    }));
+    document.querySelectorAll('[data-up]').forEach(b => b.addEventListener('click', () => {
+      const list = activeProfilesList();
+      const k = list.findIndex(p => p.id === b.dataset.up);
+      if (k > 0) { swapProfiles(list[k].id, list[k-1].id); save(); openProfileManager(); renderAll(); }
+    }));
+    document.querySelectorAll('[data-down]').forEach(b => b.addEventListener('click', () => {
+      const list = activeProfilesList();
+      const k = list.findIndex(p => p.id === b.dataset.down);
+      if (k > -1 && k < list.length - 1) { swapProfiles(list[k].id, list[k+1].id); save(); openProfileManager(); renderAll(); }
     }));
   }
 
