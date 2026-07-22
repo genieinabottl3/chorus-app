@@ -266,6 +266,8 @@
   .tag-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .tag-chip.all { color: var(--text); background: #ece9e4; opacity: 1; }
   .tag-chip.all.active { border-color: var(--text); }
+  .tag-manage-btn { border: 1px solid var(--border); background: var(--card); color: var(--text-dim); border-radius: 999px; width: 26px; height: 26px; cursor: pointer; font-size: 12px; line-height: 1; }
+  .tag-rename-input { flex: 1; padding: 6px 10px; border: 1.5px solid var(--accent); border-radius: 7px; font-size: 13px; }
 
   button.primary {
     background: var(--accent);
@@ -1317,10 +1319,82 @@
       const c = tagColor(tag);
       html += `<div class="tag-chip ${state.activeTag===tag?'active':''}" style="color:${c}; background:${c}22" data-tag="${escapeHtml(tag)}"><span class="dot"></span>${escapeHtml(tag)}</div>`;
     });
+    if (tags.length) html += `<button class="tag-manage-btn" id="tagManageBtn" title="Manage tags">⚙</button>`;
     bar.innerHTML = html;
     bar.querySelectorAll('.tag-chip').forEach(el => {
       el.addEventListener('click', () => { state.activeTag = el.dataset.tag; save(); renderAll(); });
     });
+    const tmb = document.getElementById('tagManageBtn');
+    if (tmb) tmb.addEventListener('click', openTagManager);
+  }
+
+  let tagEditing = null;
+  function removeTagEverywhere(tag){
+    state.tasks.forEach(t => { if (t.tags) t.tags = t.tags.filter(x => x !== tag); });
+    if (state.activeTag === tag) state.activeTag = 'all';
+    save();
+  }
+  function renameTag(oldTag, rawNew){
+    const newTag = (rawNew || '').trim().toLowerCase();
+    if (!newTag || newTag === oldTag) return;
+    state.tasks.forEach(t => {
+      if (t.tags && t.tags.includes(oldTag)) {
+        t.tags = t.tags.filter(x => x !== oldTag);
+        if (!t.tags.includes(newTag)) t.tags.push(newTag);
+      }
+    });
+    if (state.activeTag === oldTag) state.activeTag = newTag;
+    save();
+  }
+  function openTagManager(){
+    const tags = allTags();
+    const rows = tags.map(t => {
+      const count = state.tasks.filter(x => (x.tags||[]).includes(t)).length;
+      const c = tagColor(t);
+      if (tagEditing === t) {
+        return `<div class="pm-row">
+          <input type="text" class="tag-rename-input" id="tagRenameInput" value="${escapeHtml(t)}">
+          <span class="pm-actions">
+            <button class="link-btn" data-savetag="${escapeHtml(t)}">Save</button>
+            <button class="icon-btn" data-canceltag="1">✕</button>
+          </span>
+        </div>`;
+      }
+      return `<div class="pm-row">
+        <span class="pm-name"><span style="width:8px;height:8px;border-radius:50%;background:${c};display:inline-block;"></span>${escapeHtml(t)} <span class="hint" style="margin:0;">${count} task${count===1?'':'s'}</span></span>
+        <span class="pm-actions">
+          <button class="icon-btn" data-rentag="${escapeHtml(t)}" title="Rename">✎</button>
+          <button class="link-btn" data-deltag="${escapeHtml(t)}">Delete</button>
+        </span>
+      </div>`;
+    }).join('');
+    document.getElementById('modalRoot').innerHTML = `
+      <div class="overlay" id="overlay">
+        <div class="modal">
+          <h2>Manage tags</h2>
+          ${tags.length ? rows : `<div class="pm-empty">No tags yet — add tags to tasks and they'll show up here.</div>`}
+          <div class="modal-actions">
+            <div class="hint">Deleting a tag removes it from its tasks — the tasks themselves stay.</div>
+            <div class="btn-group"><button class="secondary" id="tmClose">Close</button></div>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') { tagEditing = null; closeModal(); } });
+    document.getElementById('tmClose').addEventListener('click', () => { tagEditing = null; closeModal(); });
+    document.querySelectorAll('[data-rentag]').forEach(b => b.addEventListener('click', () => { tagEditing = b.dataset.rentag; openTagManager(); document.getElementById('tagRenameInput').focus(); }));
+    document.querySelectorAll('[data-canceltag]').forEach(b => b.addEventListener('click', () => { tagEditing = null; openTagManager(); }));
+    document.querySelectorAll('[data-savetag]').forEach(b => b.addEventListener('click', () => {
+      renameTag(b.dataset.savetag, document.getElementById('tagRenameInput').value);
+      tagEditing = null; openTagManager(); renderAll();
+    }));
+    const ri = document.getElementById('tagRenameInput');
+    if (ri) ri.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { renameTag(tagEditing, ri.value); tagEditing = null; openTagManager(); renderAll(); }
+      else if (e.key === 'Escape') { tagEditing = null; openTagManager(); }
+    });
+    document.querySelectorAll('[data-deltag]').forEach(b => b.addEventListener('click', () => {
+      removeTagEverywhere(b.dataset.deltag); openTagManager(); renderAll();
+    }));
   }
 
   function escapeHtml(s){
@@ -1934,17 +2008,24 @@
     return (list||[]).map(s => ({ id: s.id, name: s.name, done: !!s.done, children: (s.children||[]).map(c => ({ id: c.id, name: c.name, done: !!c.done })) }));
   }
 
+  function seedDate(){
+    // New tasks default their date to the calendar's selected day (if adding from the Calendar), else today.
+    return (state.view === 'calendar' && state.selectedDate) ? state.selectedDate : todayStr();
+  }
+
   function openModal(task){
+    const seed = seedDate();
+    const seedD = parseDate(seed);
     editingId = task ? task.id : null;
     modalTags = task ? [...(task.tags||[])] : [];
     modalType = task ? task.type : 'recurring';
     modalFreq = task && task.recurrence ? task.recurrence.freq : 'daily';
     modalWeekdays = task && task.recurrence ? [...(task.recurrence.weekdays||[])] : [];
     modalDayOfMonth = task && task.recurrence ? (task.recurrence.dayOfMonth||1) : 1;
-    modalYearlyMonth = task && task.recurrence && task.recurrence.month ? task.recurrence.month : (new Date()).getMonth()+1;
-    modalYearlyDay = task && task.recurrence && task.recurrence.day ? task.recurrence.day : (new Date()).getDate();
+    modalYearlyMonth = task && task.recurrence && task.recurrence.month ? task.recurrence.month : (seedD.getMonth()+1);
+    modalYearlyDay = task && task.recurrence && task.recurrence.day ? task.recurrence.day : seedD.getDate();
     modalColumn = task ? (task.column || 'todo') : 'todo';
-    modalDueDate = task ? (task.dueDate || '') : '';
+    modalDueDate = task ? (task.dueDate || '') : seed;
     modalSubtasks = task ? deepCloneSubtasks(task.subtasks) : [];
     modalAddChildFor = null;
     modalProfile = task ? (task.profile || state.profiles[0].id) : (state.activeProfile === 'all' ? state.profiles[0].id : state.activeProfile);
