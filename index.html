@@ -108,10 +108,15 @@
     margin-bottom: 16px;
     flex-wrap: wrap;
     gap: 10px;
+    background: linear-gradient(135deg, #f4efe8, #efe9e1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
   }
   header.top h1 { font-size: 20px; margin: 0; font-weight: 650; }
   header.top .date { font-size: 13px; color: var(--text-dim); }
-  header.top .tagline { font-size: 11.5px; color: var(--text-dim); font-weight: 500; margin-top: 4px; }
+  header.top .tagline { font-size: 11.5px; color: var(--text-dim); font-weight: 500; margin-top: 3px; }
+  .chorus-textblock { display: flex; flex-direction: column; }
   .welcome { font-size: 16px; font-weight: 650; }
   .welcome-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
   .welcome-row .date { margin: 0; flex: none; font-size: 12.5px; color: var(--text-dim); }
@@ -140,7 +145,10 @@
   .sync-status.err { color: var(--red); }
   .user-email { font-size: 11.5px; color: var(--text-dim); }
 
-  .profile-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; }
+  .profile-bar { display: flex; gap: 6px; align-items: center; margin-bottom: 12px; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-bottom: 3px; }
+  .profile-bar > * { flex: none; }
+  .profile-bar::-webkit-scrollbar { height: 6px; }
+  .profile-bar::-webkit-scrollbar-thumb { background: #d9d4cc; border-radius: 3px; }
   .profile-chip {
     padding: 6px 14px;
     border-radius: 999px;
@@ -386,6 +394,8 @@
   .mini-check.checked { background: var(--green); border-color: var(--green); }
   .subtask-name { font-size: 12.5px; }
   .subtask-name.done { text-decoration: line-through; color: var(--text-dim); }
+  .subtask-num { font-size: 11px; font-weight: 700; color: var(--text-dim); flex: none; }
+  .st-name-input { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: inherit; }
 
   /* Board view */
   .board {
@@ -664,14 +674,14 @@
 
 <div class="app" id="appRoot" style="display:none">
   <header class="top">
-    <div>
-      <div class="chorus-logo">
-        <span class="chorus-seal" aria-hidden="true">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
-        </span>
+    <div class="chorus-logo">
+      <span class="chorus-seal" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+      </span>
+      <span class="chorus-textblock">
         <span class="chorus-word">Chorus</span>
-      </div>
-      <div class="tagline">Your chores, on us</div>
+        <span class="tagline">Your chores, on us</span>
+      </span>
     </div>
     <div class="account-bar">
       <span class="sync-status" id="syncStatus"></span>
@@ -875,7 +885,7 @@
           <h2>Your name</h2>
           <div class="field">
             <label>Display name</label>
-            <input type="text" id="nameInput" value="${escapeHtml(cur)}" placeholder="e.g. Steffie">
+            <input type="text" id="nameInput" value="${escapeHtml(cur)}" placeholder="e.g. Ari">
             <div class="hint">Leave blank to use your Google account name.</div>
           </div>
           <div class="modal-actions">
@@ -1471,15 +1481,20 @@
     if (!state.expandedTasks.includes(task.id)) return '';
     const { total } = countSubtasks(task.subtasks);
     if (total === 0) return '';
+    const base = (typeof task.num === 'number') ? task.num : '';
     let html = '<div class="subtask-tree">';
-    (task.subtasks||[]).forEach(sub => {
+    (task.subtasks||[]).forEach((sub, i) => {
+      const sn = base !== '' ? base + '.' + (i+1) : (i+1);
       html += `<div class="subtask-row">
         <span class="mini-check ${sub.done?'checked':''}" data-action="toggle-sub" data-task="${task.id}" data-sub="${sub.id}">${sub.done?'✓':''}</span>
+        <span class="subtask-num">${sn}</span>
         <span class="subtask-name ${sub.done?'done':''}">${escapeHtml(sub.name)}</span>
       </div>`;
-      (sub.children||[]).forEach(child => {
+      (sub.children||[]).forEach((child, j) => {
+        const cn = sn + '.' + (j+1);
         html += `<div class="subtask-row child">
           <span class="mini-check ${child.done?'checked':''}" data-action="toggle-sub" data-task="${task.id}" data-sub="${sub.id}" data-child="${child.id}">${child.done?'✓':''}</span>
+          <span class="subtask-num">${cn}</span>
           <span class="subtask-name ${child.done?'done':''}">${escapeHtml(child.name)}</span>
         </div>`;
       });
@@ -2273,20 +2288,26 @@
   // Subtask editor inside modal (up to 2 levels: subtask -> child, no deeper)
   function renderSubtaskEditor(){
     const el = document.getElementById('subtaskEditor');
+    const t = editingId ? state.tasks.find(x => x.id === editingId) : null;
+    const base = (t && typeof t.num === 'number') ? t.num : (state.nextTaskNumber || '#');
     let html = '<div class="st-editor">';
-    modalSubtasks.forEach(sub => {
+    modalSubtasks.forEach((sub, i) => {
+      const sn = base + '.' + (i+1);
       html += `
         <div class="st-row">
           <span class="mini-check ${sub.done?'checked':''}" data-action="st-toggle" data-sub="${sub.id}">${sub.done?'✓':''}</span>
-          <span class="st-name-edit ${sub.done?'subtask-name done':''}">${escapeHtml(sub.name)}</span>
+          <span class="subtask-num">${sn}</span>
+          <input class="st-name-input" data-name-sub="${sub.id}" value="${escapeHtml(sub.name)}">
           <button class="icon-btn" data-action="st-add-child" data-sub="${sub.id}" title="Add dependency">+ sub</button>
           <button class="icon-btn" data-action="st-delete" data-sub="${sub.id}">✕</button>
         </div>`;
-      (sub.children||[]).forEach(child => {
+      (sub.children||[]).forEach((child, j) => {
+        const cn = sn + '.' + (j+1);
         html += `
           <div class="st-row child">
             <span class="mini-check ${child.done?'checked':''}" data-action="st-toggle" data-sub="${sub.id}" data-child="${child.id}">${child.done?'✓':''}</span>
-            <span class="st-name-edit ${child.done?'subtask-name done':''}">${escapeHtml(child.name)}</span>
+            <span class="subtask-num">${cn}</span>
+            <input class="st-name-input" data-name-sub="${sub.id}" data-name-child="${child.id}" value="${escapeHtml(child.name)}">
             <button class="icon-btn" data-action="st-delete" data-sub="${sub.id}" data-child="${child.id}">✕</button>
           </div>`;
       });
@@ -2333,6 +2354,18 @@
         renderSubtaskEditor();
         const input = document.getElementById('stChildInput');
         if (input) input.focus();
+      });
+    });
+    el.querySelectorAll('.st-name-input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const sub = modalSubtasks.find(s => s.id === inp.dataset.nameSub);
+        if (!sub) return;
+        if (inp.dataset.nameChild) {
+          const child = (sub.children||[]).find(c => c.id === inp.dataset.nameChild);
+          if (child) child.name = inp.value;
+        } else {
+          sub.name = inp.value;
+        }
       });
     });
     const childInput = document.getElementById('stChildInput');
